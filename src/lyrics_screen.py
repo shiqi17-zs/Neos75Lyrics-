@@ -64,6 +64,7 @@ DEFAULT_CONFIG = {
     "mon_image": "",
     "mon_crop": [0, 0, 1, 1],
     "skins": {},
+    "auto_sync": True,
 }
 
 # players that are safe to trust for SMTC (a video tab in Edge must not win)
@@ -1034,7 +1035,10 @@ class Engine:
             self._set_track(name, art)
         hwnd = lyrics_window()
         if not hwnd:
-            dbg("ocr: no desktop-lyrics window")
+            now = time.time()
+            if now - getattr(self, "_no_window_at", 0) > 30:
+                self._no_window_at = now
+                dbg("ocr: no desktop-lyrics window")
             self.on_status("没找到网易云桌面歌词：请打开「桌面歌词」并切换到横排")
             return False
         img = capture_window(hwnd)

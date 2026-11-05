@@ -33,7 +33,7 @@ BORDER = "#1B2130"
 
 FONT = "Microsoft YaHei UI"
 
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 if getattr(sys, "frozen", False):
     BASE = os.path.dirname(sys.executable)
@@ -261,6 +261,18 @@ class App:
             pass
         self.root.after(80, self._drain)
         self.root.after(500, self._tick_preview)
+        logsetup.info("startup args=%s frozen=%s" % (sys.argv[1:], getattr(sys, "frozen", False)))
+        if self.cfg.get("auto_sync", True):
+            self.root.after(1500, self._auto_sync)
+
+    def _auto_sync(self):
+        try:
+            if self.engine and self.engine.running:
+                return
+            self.start()
+            logsetup.info("auto sync started")
+        except Exception:
+            logsetup.exception("auto sync failed")
 
     # ------------------------------------------------------------------ shell
     def _build(self):
@@ -960,9 +972,15 @@ class App:
         self.blur_scale.set(int(self.cfg.get("frost_radius", 7)))
         self.blur_scale.pack(side="right", padx=(0, 4))
         self.autostart_var = tk.BooleanVar(value=self._autostart_enabled())
-        t_start = Toggle(opt_card.body, "开机自动启动", self.autostart_var, accent=self.accent)
+        row2 = tk.Frame(opt_card.body, bg=CARD)
+        row2.pack(fill="x", pady=(6, 0))
+        t_start = Toggle(row2, "开机自动启动", self.autostart_var, accent=self.accent)
         t_start.oncommand(self.toggle_autostart)
-        t_start.pack(anchor="w", pady=(6, 0))
+        t_start.pack(side="left")
+        self.auto_sync_var = tk.BooleanVar(value=bool(self.cfg.get("auto_sync", True)))
+        t_sync = Toggle(row2, "启动后自动同步", self.auto_sync_var, accent=self.accent)
+        t_sync.oncommand(self.save_cfg)
+        t_sync.pack(side="left", padx=10)
 
         skin_card = Card(frame, bg=CARD, radius=20, padx=18, pady=14)
         skin_card.pack(fill="x", pady=(0, 12))
@@ -1248,6 +1266,11 @@ class App:
         except Exception:
             pass
         try:
+            if hasattr(self, "auto_sync_var"):
+                self.cfg["auto_sync"] = bool(self.auto_sync_var.get())
+        except Exception:
+            pass
+        try:
             sc = dict(self.cfg.get("scenes", {}) or {})
             sc["lyrics"] = bool(self.lyr_push.get())
             sc["cover"] = True
@@ -1360,16 +1383,30 @@ class App:
         except Exception:
             return False
 
+    def _clear_startup_approved(self):
+        """Windows keeps a disabled flag here; drop it so the entry runs again."""
+        try:
+            import winreg
+            path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as k:
+                try:
+                    winreg.DeleteValue(k, "Neos75Lyrics")
+                except FileNotFoundError:
+                    pass
+        except Exception:
+            pass
+
     def toggle_autostart(self):
         try:
             import winreg
             key, path = self._run_key()
             with winreg.OpenKey(key, path, 0, winreg.KEY_SET_VALUE) as k:
                 if self.autostart_var.get():
-                    cmd = f'"{sys.executable}"'
+                    cmd = f'"{sys.executable}" --tray'
                     if not getattr(sys, "frozen", False):
-                        cmd = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+                        cmd = f'"{sys.executable}" "{os.path.abspath(__file__)}" --tray'
                     winreg.SetValueEx(k, "Neos75Lyrics", 0, winreg.REG_SZ, cmd)
+                    self._clear_startup_approved()
                 else:
                     try:
                         winreg.DeleteValue(k, "Neos75Lyrics")
@@ -1608,6 +1645,7 @@ def focus_existing_window():
 
 
 def main():
+    start_hidden = "--tray" in sys.argv
     if acquire_single_instance() is None:
         # another copy owns the screen: bring it forward and leave quietly
         focus_existing_window()
@@ -1618,7 +1656,11 @@ def main():
     except Exception:
         pass
     root = tk.Tk()
-    App(root)
+    app = App(root)
+    if start_hidden:
+        root.withdraw()
+        app.ensure_tray()
+        logsetup.info("started hidden in tray")
     root.mainloop()
 
 
